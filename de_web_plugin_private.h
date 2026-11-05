@@ -1474,6 +1474,8 @@ public:
     void handleBindAndUnbindRspIndication(const deCONZ::ApsDataIndication &ind);
     void handleMgmtLeaveRspIndication(const deCONZ::ApsDataIndication &ind);
     void handleMgmtLqiRspIndication(const deCONZ::ApsDataIndication &ind);
+    void storeNeighborTablePage(const deCONZ::ApsDataIndication &ind, QDataStream &stream, quint8 zdpStatus,
+                                quint8 neighEntries, quint8 startIndex, quint8 listCount);
     void handleXalClusterIndication(const deCONZ::ApsDataIndication &ind, deCONZ::ZclFrame &zclFrame);
     void handleWindowCoveringClusterIndication(const deCONZ::ApsDataIndication &ind, deCONZ::ZclFrame &zclFrame);
     void handlePollControlIndication(const deCONZ::ApsDataIndication &ind, deCONZ::ZclFrame &zclFrame);
@@ -1982,6 +1984,28 @@ public:
     DeviceContainer m_devices;
     std::vector<Group> groups;
     std::vector<LightNode> nodes;
+
+    /*! One entry of a node's neighbor table, as reported in a ZDP Mgmt_Lqi_rsp. */
+    struct NeighborTableEntry
+    {
+        quint64 extAddress = 0;
+        quint16 nwkAddress = 0;
+        quint8 deviceType = 3;   // 0 coordinator, 1 router, 2 end device, 3 unknown
+        quint8 rxOnWhenIdle = 2; // 0 off, 1 on, 2 unknown
+        quint8 relationship = 3; // 0 parent, 1 child, 2 sibling, 3 none, 4 previous child
+        quint8 depth = 0;
+        quint8 lqi = 0;
+    };
+
+    /*! Neighbor table of one node, assembled from the Mgmt_Lqi_rsp pages. */
+    struct NeighborTable
+    {
+        std::vector<NeighborTableEntry> entries; // last complete table
+        std::vector<NeighborTableEntry> pending; // table being assembled, page by page
+        QDateTime updated;                       // when entries was completed (UTC)
+    };
+
+    QHash<quint64, NeighborTable> neighborTables; // key: extended address of the reporting node
     std::vector<Rule> rules;
     QString daylightSensorId;
     size_t daylightOffsetIter = 0;

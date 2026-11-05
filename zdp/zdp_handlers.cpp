@@ -437,6 +437,8 @@ void DeRestPluginPrivate::handleMgmtLqiRspIndication(const deCONZ::ApsDataIndica
         return;
     }
 
+    storeNeighborTablePage(ind, stream, zdpStatus, neighEntries, startIndex, listCount);
+
     if ((startIndex + listCount) >= neighEntries || listCount == 0)
     {
         // finish
@@ -447,6 +449,89 @@ void DeRestPluginPrivate::handleMgmtLqiRspIndication(const deCONZ::ApsDataIndica
                 l.rx();
             }
         }
+    }
+}
+
+/*! Keep the neighbor table a node reports in a Mgmt_Lqi_rsp, for the topology endpoint.
+
+    The table arrives in pages (startIndex, listCount); it replaces the previous one
+    once complete. Pages out of sequence discard the partial table.
+    \param stream positioned on the first neighbor table entry
+ */
+void DeRestPluginPrivate::storeNeighborTablePage(const deCONZ::ApsDataIndication &ind, QDataStream &stream, quint8 zdpStatus,
+                                                 quint8 neighEntries, quint8 startIndex, quint8 listCount)
+{
+    if (zdpStatus != 0x00) // SUCCESS
+    {
+        return;
+    }
+
+    quint64 srcExt = ind.srcAddress().hasExt() ? ind.srcAddress().ext() : 0;
+
+    if (srcExt == 0 && ind.srcAddress().hasNwk() && apsCtrl)
+    {
+        int i = 0;
+        const deCONZ::Node *node = nullptr;
+        while (apsCtrl->getNode(i, &node) == 0)
+        {
+            if (node->address().nwk() == ind.srcAddress().nwk())
+            {
+                srcExt = node->address().ext();
+                break;
+            }
+            i++;
+        }
+    }
+
+    if (srcExt == 0)
+    {
+        return;
+    }
+
+    NeighborTable &table = neighborTables[srcExt];
+
+    if (startIndex == 0)
+    {
+        table.pending.clear();
+    }
+    else if (startIndex != table.pending.size())
+    {
+        table.pending.clear(); // a page is missing: wait for the next complete table
+        return;
+    }
+
+    for (quint8 n = 0; n < listCount; n++)
+    {
+        NeighborTableEntry entry;
+        quint64 extPanId;
+        quint8 flags;
+        quint8 permitJoining;
+
+        stream >> extPanId;
+        stream >> entry.extAddress;
+        stream >> entry.nwkAddress;
+        stream >> flags;
+        stream >> permitJoining;
+        stream >> entry.depth;
+        stream >> entry.lqi;
+
+        if (stream.status() != QDataStream::Ok)
+        {
+            table.pending.clear();
+            return;
+        }
+
+        entry.deviceType = flags & 0x03;
+        entry.rxOnWhenIdle = (flags >> 2) & 0x03;
+        entry.relationship = (flags >> 4) & 0x07;
+        table.pending.push_back(entry);
+    }
+
+    if ((startIndex + listCount) >= neighEntries || listCount == 0)
+    {
+        table.entries = table.pending;
+        table.pending.clear();
+        table.updated = QDateTime::currentDateTimeUtc();
     }
 }
 
