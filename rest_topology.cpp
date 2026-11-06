@@ -10,6 +10,7 @@
 
 #include "de_web_plugin.h"
 #include "de_web_plugin_private.h"
+#include <QPair>
 #include <QSet>
 #include "utils/utils.h"
 
@@ -50,8 +51,9 @@ static QString relationName(quint8 relationship)
 
     Tables received by the plugin in Mgmt_Lqi_rsp come first, with the
     neighbor \c relation, \c depth and \c lastupdated (when the table was
-    last completed). Nodes without such a table fall back to the neighbors
-    known by the core (source, target and lqi only).
+    last completed). Neighbors known by the core and missing from that table
+    follow, with source, target and lqi only: the coordinator's children, for
+    one, are known to the core but absent from its Mgmt_Lqi_rsp.
     \return REQ_READY_SEND
             REQ_NOT_HANDLED
  */
@@ -60,7 +62,7 @@ int DeRestPluginPrivate::getTopology(const ApiRequest &req, ApiResponse &rsp)
     Q_UNUSED(req);
 
     QVariantList links;
-    QSet<quint64> reported;
+    QSet<QPair<quint64, quint64>> reported; // (source, target) already listed
 
     for (auto it = neighborTables.cbegin(); it != neighborTables.cend(); ++it)
     {
@@ -69,7 +71,6 @@ int DeRestPluginPrivate::getTopology(const ApiRequest &req, ApiResponse &rsp)
             continue;
         }
 
-        reported.insert(it.key());
         const QString source = generateUniqueId(it.key(), 0, 0);
         const QString updated = it.value().updated.toString(QLatin1String("yyyy-MM-ddTHH:mm:ssZ"));
 
@@ -79,6 +80,8 @@ int DeRestPluginPrivate::getTopology(const ApiRequest &req, ApiResponse &rsp)
             {
                 continue; // neighbor with unknown extended address
             }
+
+            reported.insert(qMakePair(it.key(), entry.extAddress));
 
             QVariantMap link;
             link[QLatin1String("source")] = source;
@@ -95,13 +98,13 @@ int DeRestPluginPrivate::getTopology(const ApiRequest &req, ApiResponse &rsp)
 
     for (int i = 0; apsCtrl && apsCtrl->getNode(i, &node) == 0; i++)
     {
-        if (reported.contains(node->address().ext()))
-        {
-            continue;
-        }
-
         for (const deCONZ::NodeNeighbor &neighbor : node->neighbors())
         {
+            if (reported.contains(qMakePair(node->address().ext(), neighbor.address().ext())))
+            {
+                continue;
+            }
+
             QVariantMap link;
             link[QLatin1String("source")] = generateUniqueId(node->address().ext(), 0, 0);
             link[QLatin1String("target")] = generateUniqueId(neighbor.address().ext(), 0, 0);
